@@ -12,5 +12,21 @@ services:
       timeout: 5s
       retries: 10
     volumes: ['pgdata:/var/lib/postgresql/data']
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://popp:popp@postgres:5432/popp
+      WEBHOOK_SIGNING_SECRET: local-development-webhook-secret
+      API_TOKEN: local-development-api-token
+    ports: ['3000:3000']
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:
