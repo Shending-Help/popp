@@ -1,0 +1,11 @@
+{
+  "id": "application-id",
+  "job_id": "associated-job-id",
+  "candidate_id": "candidate-id",
+  "candidate": {
+    "phone_number": "+1234567890",
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "email_address": "jane.doe@example.com"
+  }
+}
