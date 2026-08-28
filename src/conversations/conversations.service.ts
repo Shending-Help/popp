@@ -59,6 +59,18 @@ export class ConversationsService {
           tx, input.candidateId, input.jobId,
         );
         if (sameJob) {
+          // Monotonicity re-read. Under READ COMMITTED each statement sees
+          // everything committed before IT starts. The only way this R2 read
+          // could have hit is if some transaction committed between our R3
+          // read and this one -- and a later R3 re-read, starting later
+          // still, is therefore guaranteed to see that same commit too.
+          // There is no interleaving where R2 hits and a subsequent R3
+          // re-read misses. A genuine duplicate application (different
+          // application_id, same candidate+job) still misses here and keeps
+          // its DUPLICATE_APPLICATION reason -- this only reclassifies the
+          // case where R2 accidentally raced ahead of R3 on the same row.
+          const replay2 = await this.conversations.findByApplicationId(tx, input.applicationId);
+          if (replay2) return { outcome: 'REPLAYED' as const, conversation: replay2 };
           return {
             outcome: 'SKIPPED' as const,
             reason: 'DUPLICATE_APPLICATION' as const,
@@ -68,6 +80,11 @@ export class ConversationsService {
 
         const active = await this.conversations.findActiveByCandidate(tx, input.candidateId);
         if (active) {
+          // Same monotonicity argument as the R2 branch above, for the R1/R3
+          // pair: if this R1 read hit, whatever committed it did so before
+          // this statement began, so a later R3 re-read cannot miss it.
+          const replay3 = await this.conversations.findByApplicationId(tx, input.applicationId);
+          if (replay3) return { outcome: 'REPLAYED' as const, conversation: replay3 };
           return {
             outcome: 'SKIPPED' as const,
             reason: 'ACTIVE_CONVERSATION_EXISTS' as const,

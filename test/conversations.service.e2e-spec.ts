@@ -30,16 +30,6 @@ function isFulfilled<T>(r: PromiseSettledResult<T>): r is PromiseFulfilledResult
   return r.status === 'fulfilled';
 }
 
-function isCreated(
-  r: CreateConversationResult,
-): r is Extract<CreateConversationResult, { outcome: 'CREATED' }> {
-  return r.outcome === 'CREATED';
-}
-
-function conversationIdOf(r: CreateConversationResult): string {
-  return r.outcome === 'SKIPPED' ? r.conversationId : r.conversation.id;
-}
-
 beforeAll(async () => { await prisma.$connect(); });
 afterAll(async () => { await prisma.$disconnect(); });
 beforeEach(async () => {
@@ -54,31 +44,21 @@ const candidateContact = {
 const CONCURRENCY = 10;
 
 describe('ConversationsService.createFromApplication — concurrent races resolve to the pre-check outcome', () => {
-  // NOTE on the assertion shape here: an identical payload shares
-  // application_id, candidate_id, AND job_id, so a losing transaction's
-  // create() can be rejected on ANY of the three unique indexes depending on
-  // timing -- Postgres reports whichever constraint it happens to hit first,
-  // and (independently of resolveLostRace) the three sequential pre-check
-  // SELECTs are not part of one snapshot under the default READ COMMITTED
-  // isolation, so a concurrent commit landing between e.g. the R3 and R2
-  // reads can make R2 "see" the winner before R3 does. Verified empirically
-  // (scratch script, not part of this diff): across repeated runs, the label
-  // distribution among the 9 losers varies -- REPLAYED, SKIPPED/
-  // DUPLICATE_APPLICATION, and SKIPPED/ACTIVE_CONVERSATION_EXISTS all appear
-  // in different proportions from run to run. This is a distinct,
-  // pre-existing gap in the pre-check ordering guarantee under adversarial
-  // concurrency -- not a regression from resolveLostRace or this task's
-  // fix -- and is out of this task's assigned scope to redesign (it would
-  // need either a single atomic combined pre-check query replacing the three
-  // separate repository calls, or a transaction-retry architecture; both are
-  // reported separately rather than patched here under review-fix pressure).
-  // What IS verified stable across repeated runs, and is what this test
-  // pins: zero rejections, exactly one CREATED, no duplicate row, and every
-  // other outcome refers back to that same winning conversation -- i.e. the
-  // system never produces two conversations or an unhandled error, even
-  // though which SkipReason/outcome label a given loser gets is not fully
-  // deterministic for this specific (all-fields-identical) race shape.
-  it('(a) N identical deliveries of the same application_id: exactly one CREATED, the rest resolve to it, zero rejections, no duplicate row', async () => {
+  // An identical payload shares application_id, candidate_id, AND job_id, so
+  // a losing transaction's create() can be rejected on any of the three
+  // unique indexes depending on timing -- and (independently of
+  // resolveLostRace) the three sequential pre-check SELECTs don't share one
+  // snapshot under READ COMMITTED, so a concurrent commit landing between
+  // e.g. the R3 and R2 reads could, in principle, make R2 "see" the winner
+  // before R3 does and return DUPLICATE_APPLICATION where REPLAYED is
+  // truthful. createFromApplication closes this by re-reading
+  // findByApplicationId before finalizing either SKIPPED branch: if R2 (or
+  // R1) just hit, the winner necessarily committed before that read began,
+  // so a later R3 re-read -- a still-later statement under READ COMMITTED --
+  // is guaranteed to see it too. This test pins the exact label the
+  // monotonicity fix promises: every loser is REPLAYED, not merely
+  // "resolves to the same conversation."
+  it('(a) N identical deliveries of the same application_id: exactly one CREATED, the rest REPLAYED, zero rejections', async () => {
     const service = buildService();
     const payload = {
       applicationId: 'app-race-a', candidateId: 'cand-race-a', jobId: 'job-race-a',
@@ -93,13 +73,8 @@ describe('ConversationsService.createFromApplication — concurrent races resolv
     expect(rejected).toHaveLength(0);
 
     const results = settled.filter(isFulfilled<CreateConversationResult>).map((r) => r.value);
-    const created = results.filter(isCreated);
-    expect(created).toHaveLength(1);
-
-    const winnerId = created[0].conversation.id;
-    const others = results.filter((r) => !isCreated(r));
-    expect(others).toHaveLength(CONCURRENCY - 1);
-    expect(others.every((r) => conversationIdOf(r) === winnerId)).toBe(true);
+    expect(results.filter((r) => r.outcome === 'CREATED')).toHaveLength(1);
+    expect(results.filter((r) => r.outcome === 'REPLAYED')).toHaveLength(CONCURRENCY - 1);
 
     expect(await prisma.conversation.count({ where: { applicationId: payload.applicationId } })).toBe(1);
   });
