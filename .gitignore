@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.env.local
+coverage/
+*.log
+
+# internal design notes — not part of the submission
+docs/
