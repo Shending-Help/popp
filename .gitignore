@@ -2,8 +2,21 @@ node_modules/
 dist/
 .env
 .env.local
+.env.*
+!.env.example
 coverage/
 *.log
+
+# OS, editor, and tool output
+.DS_Store
+.vscode/
+.eslintcache
+.nyc_output/
+test-results/
+npm-debug.log*
+
+# Internal development notes
+.superpowers/
 
 # internal design notes — not part of the submission
 docs/
