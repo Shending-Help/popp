@@ -7,7 +7,8 @@ import {
   DOMAIN_EVENT_DISPATCHER, DomainEventDispatcher,
 } from '../events/domain-event';
 import {
-  ConversationConflictError, ConversationNotFoundError, InvalidPhoneNumberError,
+  ConcurrentModificationError, ConversationConflictError, ConversationNotFoundError,
+  InvalidPhoneNumberError,
 } from '../common/errors/domain-errors';
 import { validatePhoneNumber } from './domain/phone';
 import { assertTransition } from './domain/state-machine';
@@ -193,7 +194,10 @@ export class ConversationsService {
 
     // Throws IllegalTransitionError (-> 422) for an impossible move; returns
     // NOOP for a redelivered one.
-    if (assertTransition(current.status, next) === 'NOOP') return current;
+    if (assertTransition(current.status, next) === 'NOOP') {
+      if (current.version !== expectedVersion) throw new ConcurrentModificationError(id);
+      return current;
+    }
 
     const updated = await this.conversations.transition(id, expectedVersion, next);
     await this.events.dispatch({
