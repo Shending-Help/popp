@@ -1,0 +1,43 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ConversationStatus {
+  CREATED
+  ONGOING
+  COMPLETED
+}
+
+model Candidate {
+  id            String         @id
+  phoneNumber   String         @map("phone_number")
+  firstName     String         @map("first_name")
+  lastName      String         @map("last_name")
+  emailAddress  String         @map("email_address")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  conversations Conversation[]
+
+  @@map("candidates")
+}
+
+model Conversation {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  applicationId String             @unique(map: "conversations_application_id_key") @map("application_id")
+  candidateId   String             @map("candidate_id")
+  jobId         String             @map("job_id")
+  status        ConversationStatus @default(CREATED)
+  version       Int                @default(0)
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+  candidate     Candidate          @relation(fields: [candidateId], references: [id])
+
+  @@unique([candidateId, jobId], map: "conversations_candidate_job_key")
+  @@index([status, createdAt(sort: Desc)], map: "conversations_status_created_at")
+  @@map("conversations")
+}
