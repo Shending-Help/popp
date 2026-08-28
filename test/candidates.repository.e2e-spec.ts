@@ -1,4 +1,3 @@
-import { PrismaClient } from '@prisma/client';
 import { CandidatesRepository } from '../src/candidates/candidates.repository';
 import { createTestPrismaClient, resetDatabase } from './support/database';
 

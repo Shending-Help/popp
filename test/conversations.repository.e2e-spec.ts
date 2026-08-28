@@ -1,6 +1,5 @@
-import { PrismaClient } from '@prisma/client';
 import { ConversationsRepository } from '../src/conversations/conversations.repository';
-import { ConcurrentModificationError, ConversationConflictError } from '../src/common/errors/domain-errors';
+import { ConcurrentModificationError } from '../src/common/errors/domain-errors';
 import { createTestPrismaClient, resetDatabase } from './support/database';
 
 const prisma = createTestPrismaClient();
@@ -40,7 +39,63 @@ describe('create — constraint violations map to named domain errors', () => {
   it('maps a second active conversation to constraint ACTIVE_CANDIDATE', async () => {
     await repo.create(prisma, base);
     await expect(repo.create(prisma, { applicationId: 'app-2', candidateId: 'cand-1', jobId: 'job-2' }))
-      .rejects.toBeInstanceOf(ConversationConflictError);
+      .rejects.toMatchObject({ constraint: 'ACTIVE_CANDIDATE' });
+  });
+});
+
+describe('findByApplicationId', () => {
+  it('returns the matching conversation', async () => {
+    const c = await repo.create(prisma, base);
+    const found = await repo.findByApplicationId(prisma, base.applicationId);
+    expect(found?.id).toBe(c.id);
+  });
+
+  it('returns null when no conversation has that application id', async () => {
+    const found = await repo.findByApplicationId(prisma, 'no-such-app');
+    expect(found).toBeNull();
+  });
+});
+
+describe('findByCandidateAndJob', () => {
+  it('returns the matching conversation', async () => {
+    const c = await repo.create(prisma, base);
+    const found = await repo.findByCandidateAndJob(prisma, base.candidateId, base.jobId);
+    expect(found?.id).toBe(c.id);
+  });
+
+  it('returns null when the candidate has no conversation for that job', async () => {
+    await repo.create(prisma, base);
+    const found = await repo.findByCandidateAndJob(prisma, base.candidateId, 'no-such-job');
+    expect(found).toBeNull();
+  });
+});
+
+describe('findActiveByCandidate', () => {
+  it('finds a CREATED conversation', async () => {
+    const c = await repo.create(prisma, base);
+    const found = await repo.findActiveByCandidate(prisma, base.candidateId);
+    expect(found?.id).toBe(c.id);
+  });
+
+  it('finds an ONGOING conversation', async () => {
+    const c = await repo.create(prisma, base);
+    await repo.transition(c.id, c.version, 'ONGOING');
+    const found = await repo.findActiveByCandidate(prisma, base.candidateId);
+    expect(found?.id).toBe(c.id);
+    expect(found?.status).toBe('ONGOING');
+  });
+
+  it('returns null when the candidate only has a COMPLETED conversation', async () => {
+    const c = await repo.create(prisma, base);
+    await repo.transition(c.id, c.version, 'ONGOING');
+    await repo.transition(c.id, c.version + 1, 'COMPLETED');
+    const found = await repo.findActiveByCandidate(prisma, base.candidateId);
+    expect(found).toBeNull();
+  });
+
+  it('returns null for a candidate with no conversations at all', async () => {
+    const found = await repo.findActiveByCandidate(prisma, 'no-such-candidate');
+    expect(found).toBeNull();
   });
 });
 
@@ -50,6 +105,20 @@ describe('transition — optimistic locking', () => {
     const updated = await repo.transition(c.id, c.version, 'ONGOING');
     expect(updated.status).toBe('ONGOING');
     expect(updated.version).toBe(1);
+  });
+
+  // The write and the read-back that builds the return value are one raw
+  // statement (UPDATE ... RETURNING), not two — this pins the exact record
+  // this call produced, not just that *some* transition eventually landed.
+  it('returns a record reflecting exactly this call\'s outcome', async () => {
+    const c = await repo.create(prisma, base);
+    const updated = await repo.transition(c.id, c.version, 'ONGOING');
+    expect(updated.id).toBe(c.id);
+    expect(updated.status).toBe('ONGOING');
+    expect(updated.version).toBe(c.version + 1);
+    expect(updated.applicationId).toBe(base.applicationId);
+    expect(updated.candidateId).toBe(base.candidateId);
+    expect(updated.jobId).toBe(base.jobId);
   });
 
   it('rejects a stale version', async () => {

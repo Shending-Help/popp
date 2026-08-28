@@ -24,6 +24,27 @@ function toRecord(row: Row): ConversationRecord {
   return { ...row, status: row.status as ConversationStatus };
 }
 
+// Shape returned by the raw UPDATE ... RETURNING in transition() — the DB's
+// own snake_case column names, since that statement bypasses Prisma's model
+// mapping entirely.
+type RawRow = {
+  id: string; application_id: string; candidate_id: string; job_id: string;
+  status: string; version: number; created_at: Date; updated_at: Date;
+};
+
+function fromRawRow(row: RawRow): ConversationRecord {
+  return {
+    id: row.id,
+    applicationId: row.application_id,
+    candidateId: row.candidate_id,
+    jobId: row.job_id,
+    status: row.status as ConversationStatus,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 /**
  * Maps a Postgres unique violation to the rule it violated.
  *
@@ -134,22 +155,30 @@ export class ConversationsRepository {
   }
 
   /**
-   * Optimistic locking. The affected-row count IS the concurrency check:
-   * read-check-write collapses into one atomic statement, so two workers that
-   * both read version N cannot both succeed.
+   * Optimistic locking via a single raw UPDATE ... RETURNING. The guarded
+   * write and the read-back of the resulting row are ONE statement, not two:
+   * a separate SELECT after the UPDATE would leave a window in which another
+   * legitimate transition could land in between, so the caller of the first
+   * transition would receive a record reflecting the second caller's write
+   * even though its own write is what actually happened (and is what's
+   * persisted). Zero returned rows means the version guard failed.
    */
   async transition(
     id: string,
     expectedVersion: number,
     next: ConversationStatus,
   ): Promise<ConversationRecord> {
-    const { count } = await this.prisma.conversation.updateMany({
-      where: { id, version: expectedVersion },
-      data: { status: next, version: { increment: 1 } },
-    });
-    if (count === 0) throw new ConcurrentModificationError(id);
-
-    const row = await this.prisma.conversation.findUniqueOrThrow({ where: { id } });
-    return toRecord(row);
+    const rows = await this.prisma.$queryRaw<RawRow[]>`
+      UPDATE "conversations"
+      SET "status" = ${next}::"ConversationStatus",
+          "version" = "version" + 1,
+          "updated_at" = now()
+      WHERE "id" = ${id}::uuid AND "version" = ${expectedVersion}
+      RETURNING
+        "id", "application_id", "candidate_id", "job_id",
+        "status", "version", "created_at", "updated_at"
+    `;
+    if (rows.length === 0) throw new ConcurrentModificationError(id);
+    return fromRawRow(rows[0]);
   }
 }
