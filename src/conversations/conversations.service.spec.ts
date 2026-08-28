@@ -77,6 +77,15 @@ describe('createFromApplication', () => {
     expect(await service.createFromApplication(payload)).toMatchObject({ outcome: 'REPLAYED' });
   });
 
+  it('checks R2 before R1 so the more specific reason wins', async () => {
+    const { service } = build({
+      findByCandidateAndJob: jest.fn().mockResolvedValue(record()),
+      findActiveByCandidate: jest.fn().mockResolvedValue(record({ id: 'other', jobId: 'job-9' })),
+    });
+    expect(await service.createFromApplication(payload))
+      .toMatchObject({ outcome: 'SKIPPED', reason: 'DUPLICATE_APPLICATION' });
+  });
+
   it('rejects an invalid phone number before touching the database', async () => {
     const { service, candidates } = build();
     await expect(service.createFromApplication({
@@ -108,6 +117,28 @@ describe('createFromApplication', () => {
     });
     expect(await service.createFromApplication(payload))
       .toMatchObject({ outcome: 'REPLAYED' });
+  });
+
+  // resolveLostRace must be keyed exhaustively off error.constraint. A P2002
+  // on APPLICATION implies a committed winner for that application_id; if the
+  // re-read still finds nothing, falling through to a different rule's
+  // lookup (here, an unrelated active conversation) would silently swap the
+  // truthful REPLAYED-or-throw answer for a wrong SKIPPED/ACTIVE_CONVERSATION_EXISTS
+  // -- exactly the R3/R1 conflation the webhook contract must keep apart.
+  it('rethrows the conflict rather than misreporting it via an unrelated lookup when the matching re-read is empty', async () => {
+    const { service } = build({
+      create: jest.fn().mockRejectedValue(new ConversationConflictError('APPLICATION')),
+      findByApplicationId: jest.fn().mockResolvedValue(null),
+      // Must NOT be consulted: an exhaustive resolveLostRace never reaches this
+      // lookup for an APPLICATION conflict. Non-null here so the test would
+      // fail loudly (SKIPPED/ACTIVE_CONVERSATION_EXISTS instead of a throw) if
+      // that guarantee ever regressed. The R1 pre-check runs first regardless,
+      // so it must pass (null) before create() is ever attempted.
+      findActiveByCandidate: jest.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(record({ id: 'unrelated' })),
+    });
+    await expect(service.createFromApplication(payload)).rejects.toBeInstanceOf(ConversationConflictError);
   });
 });
 

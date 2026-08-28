@@ -121,27 +121,40 @@ export class ConversationsService {
     return result;
   }
 
+  // Keyed exhaustively off error.constraint, one branch per index, each
+  // ending in either the outcome that constraint implies or a rethrow. A
+  // P2002 on APPLICATION implies a committed winner for that application_id;
+  // if the re-read still can't find it, something is wrong in a way this
+  // method has no business papering over by falling through to a *different*
+  // rule's outcome (that would silently swap REPLAYED for SKIPPED, exactly
+  // the R3/R1 conflation the webhook contract must keep apart).
   private async resolveLostRace(
     input: ApplicationEventInput,
     error: ConversationConflictError,
   ): Promise<CreateConversationResult> {
-    if (error.constraint === 'APPLICATION') {
-      const existing = await this.conversations.findByApplicationId(this.prisma, input.applicationId);
-      if (existing) return { outcome: 'REPLAYED', conversation: existing };
-    }
-    if (error.constraint === 'CANDIDATE_JOB') {
-      const existing = await this.conversations.findByCandidateAndJob(
-        this.prisma, input.candidateId, input.jobId,
-      );
-      if (existing) {
-        return { outcome: 'SKIPPED', reason: 'DUPLICATE_APPLICATION', conversationId: existing.id };
+    switch (error.constraint) {
+      case 'APPLICATION': {
+        const existing = await this.conversations.findByApplicationId(this.prisma, input.applicationId);
+        if (existing) return { outcome: 'REPLAYED', conversation: existing };
+        throw error;
+      }
+      case 'CANDIDATE_JOB': {
+        const existing = await this.conversations.findByCandidateAndJob(
+          this.prisma, input.candidateId, input.jobId,
+        );
+        if (existing) {
+          return { outcome: 'SKIPPED', reason: 'DUPLICATE_APPLICATION', conversationId: existing.id };
+        }
+        throw error;
+      }
+      case 'ACTIVE_CANDIDATE': {
+        const active = await this.conversations.findActiveByCandidate(this.prisma, input.candidateId);
+        if (active) {
+          return { outcome: 'SKIPPED', reason: 'ACTIVE_CONVERSATION_EXISTS', conversationId: active.id };
+        }
+        throw error;
       }
     }
-    const active = await this.conversations.findActiveByCandidate(this.prisma, input.candidateId);
-    if (active) {
-      return { outcome: 'SKIPPED', reason: 'ACTIVE_CONVERSATION_EXISTS', conversationId: active.id };
-    }
-    throw error;
   }
 
   async getById(id: string): Promise<ConversationRecord> {
