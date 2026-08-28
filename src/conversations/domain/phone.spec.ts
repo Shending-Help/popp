@@ -16,7 +16,7 @@ describe('validatePhoneNumber — E.164 hard gate', () => {
       .toEqual({ ok: false, reason: 'NOT_E164' });
   });
 
-  it('accepts and returns a valid UK number in E.164', () => {
+  it('accepts a well-formed number and returns it in canonical E.164 form', () => {
     expect(validatePhoneNumber('+447700900123', { strict: false }))
       .toEqual({ ok: true, e164: '+447700900123', plausible: true });
   });
@@ -39,18 +39,30 @@ describe('validatePhoneNumber — plausibility tier', () => {
       .toEqual({ ok: false, reason: 'NOT_PLAUSIBLE' });
   });
 
-  it('accepts a genuinely valid number under strict mode', () => {
-    expect(validatePhoneNumber('+447700900123', { strict: true }))
-      .toEqual({ ok: true, e164: '+447700900123', plausible: true });
-  });
-
   // +447700900123 is in Ofcom's reserved fiction range (07700 900xxx):
   // libphonenumber reports it possible (correct length and prefix shape) but
   // not valid (the range is not assigned to real subscribers). The plausibility
   // tier deliberately checks possibility, not validity — reserved ranges are
   // legitimate test data in recruitment pipelines.
-  it('accepts a reserved-fiction-range number, documenting possibility vs validity', () => {
+  it('accepts a possible-but-reserved number under strict mode', () => {
     expect(validatePhoneNumber('+447700900123', { strict: true }))
       .toEqual({ ok: true, e164: '+447700900123', plausible: true });
+  });
+
+  // +12125551234 is both possible and genuinely valid (assigned US range),
+  // distinct from the reserved-but-possible case above.
+  it('accepts a fully valid number under strict mode', () => {
+    expect(validatePhoneNumber('+12125551234', { strict: true }))
+      .toEqual({ ok: true, e164: '+12125551234', plausible: true });
+  });
+
+  // +9999999999999 satisfies the E.164 regex (leading '+', non-zero first
+  // digit, 13 digits) but has no assigned country calling code, so
+  // parsePhoneNumberFromString returns undefined. This exercises the
+  // `parsed?.number ?? trimmed` fallback in phone.ts, where the canonical
+  // e164 form falls back to the already-validated raw input.
+  it('falls back to the raw input when libphonenumber cannot parse a well-formed number', () => {
+    expect(validatePhoneNumber('+9999999999999', { strict: false }))
+      .toEqual({ ok: true, e164: '+9999999999999', plausible: false });
   });
 });
