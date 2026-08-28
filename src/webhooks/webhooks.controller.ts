@@ -1,5 +1,5 @@
 import { Body, Controller, HttpCode, Post, Res, UseGuards, UsePipes } from '@nestjs/common';
-import { ApiExcludeEndpoint } from '@nestjs/swagger';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { WebhookSignatureGuard } from '../common/guards/webhook-signature.guard';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
@@ -8,6 +8,7 @@ import { ConversationDto } from '../conversations/dto/conversation.dto';
 import { ApplicationEventPayload, applicationEventSchema } from './dto/application-event.schema';
 
 @Controller('webhooks')
+@ApiTags('webhooks')
 @UseGuards(WebhookSignatureGuard)
 export class WebhooksController {
   constructor(private readonly conversations: ConversationsService) {}
@@ -26,7 +27,7 @@ export class WebhooksController {
    */
   @Post('applications')
   @HttpCode(200)
-  @ApiExcludeEndpoint()
+  @ApiOperation({ summary: 'Ingest a signed job application webhook' })
   @UsePipes(new ZodValidationPipe(applicationEventSchema))
   async handleApplication(
     @Body() payload: ApplicationEventPayload,

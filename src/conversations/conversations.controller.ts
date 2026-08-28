@@ -1,7 +1,7 @@
 import {
   Body, Controller, Get, Param, ParseUUIDPipe, Patch, Query, UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiTokenGuard } from '../common/guards/api-token.guard';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { ConversationsService } from './conversations.service';
@@ -18,6 +18,7 @@ export class ConversationsController {
   constructor(private readonly conversations: ConversationsService) {}
 
   @Get()
+  @ApiOperation({ summary: 'List conversations with filters and cursor pagination' })
   @ApiOkResponse({ type: ConversationDto, isArray: true })
   async list(
     @Query(new ZodValidationPipe(listConversationsSchema)) query: ListConversationsQuery,
@@ -37,12 +38,14 @@ export class ConversationsController {
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Get a conversation by ID' })
   @ApiOkResponse({ type: ConversationDto })
   async getOne(@Param('id', ParseUUIDPipe) id: string) {
     return ConversationDto.from(await this.conversations.getById(id));
   }
 
   @Patch(':id/status')
+  @ApiOperation({ summary: 'Advance a conversation through its lifecycle' })
   @ApiOkResponse({ type: ConversationDto })
   async changeStatus(
     @Param('id', ParseUUIDPipe) id: string,

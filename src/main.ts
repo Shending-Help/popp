@@ -12,7 +12,10 @@ async function bootstrap() {
   app.useGlobalFilters(new DomainExceptionFilter());
   const swagger = new DocumentBuilder()
     .setTitle('Conversation Integration System')
-    .setDescription('Job-application webhook ingestion and conversation lifecycle API')
+    .setDescription(
+      'Job-application webhook ingestion and conversation lifecycle API. ' +
+      'Use the bearer token for internal conversation routes and HMAC signatures for webhooks.',
+    )
     .setVersion('1.0')
     .addBearerAuth()
     .build();
